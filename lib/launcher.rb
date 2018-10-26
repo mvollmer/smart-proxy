@@ -4,6 +4,13 @@ require 'proxy/settings'
 require 'proxy/signal_handler'
 require 'thread'
 
+module WEBrick
+  class HTTPRequest
+    attr_reader :socket
+    attr_writer :request_line
+  end
+end
+
 module Proxy
   class Launcher
     include ::Proxy::Log
@@ -147,10 +154,106 @@ module Proxy
       retry
     end
 
+    def ssh_on_socket(socket, command, ssh_user, host, ssh_options)
+      started = false
+      err_buf = ""
+      begin
+        Net::SSH.start(host, ssh_user, ssh_options) do |ssh|
+          channel = ssh.open_channel do |ch|
+            ch.exec(command) do |ch, success|
+              raise "could not execute command" unless success
+
+              socket.extend(Net::SSH::BufferedIo)
+              ssh.listen_to(socket)
+
+              ch.on_process do
+                if socket.available > 0
+                  ch.send_data(socket.read_available)
+                end
+                if socket.closed?
+                  ch.close
+                end
+              end
+
+              ch.on_data do |ch2, data|
+                if !started
+                  started = true
+                  yield
+                end
+                socket.enqueue(data)
+              end
+
+              ch.on_request('exit-status') do |ch, data|
+                print("EX ", data.read_long, "\n")
+                ch.close
+              end
+
+              channel.on_request('exit-signal') do |ch, data|
+                print("SIG ", data.read_string, "\n")
+                ch.close
+              end
+
+              ch.on_extended_data do |ch2, type, data|
+                print(type, ": ", data, "\n")
+                err_buf += data
+              end
+            end
+          end
+
+          channel.wait
+          if started
+            return 101, ""
+          else
+            return 418, err_buf
+          end
+        end
+      rescue Net::SSH::AuthenticationFailed => e
+        return 401, e.message
+      end
+    end
+
     def webrick_server(app, addresses, port)
       server = ::WEBrick::HTTPServer.new(app)
       addresses.each {|a| server.listen(a, port)}
       server.mount "/", Rack::Handler::WEBrick, app[:app]
+      server.mount_proc "/remote_execution/ssh_session" do |req, res|
+        params = MultiJson.load(req.body)
+
+        methods = %w(publickey)
+        methods.unshift('password') if params["ssh_password"]
+
+        ssh_options = { }
+        ssh_options[:port] = params["ssh_port"] if params["ssh_port"]
+        ssh_options[:keys] = [ params["ssh_key_file"] ] if params["ssh_key_file"]
+        ssh_options[:password] = params["ssh_password"] if params["ssh_password"]
+        ssh_options[:passphrase] = params[:ssh_key_passphrase] if params[:ssh_key_passphrase]
+        # ssh_options[:user_known_hosts_file] = @known_hosts_file if @known_hosts_file
+        ssh_options[:keys_only] = true
+        # if the host public key is contained in the known_hosts_file,
+        # verify it, otherwise, if missing, import it and continue
+        ssh_options[:paranoid] = true
+        ssh_options[:auth_methods] = methods
+        # ssh_options[:user_known_hosts_file] = prepare_known_hosts if @host_public_key
+        ssh_options[:number_of_password_prompts] = 1
+        # ssh_options[:verbose] = settings[:ssh_log_level]
+        # ssh_options[:logger] = ForemanRemoteExecutionCore::LogFilter.new(SmartProxyDynflowCore::Log.instance)
+
+        status, body = ssh_on_socket(req.socket, params["command"], params["ssh_user"], params["hostname"],
+                                     ssh_options) do
+          res.status = 101
+          res['upgrade'] = "raw"
+          res.setup_header
+          res.instance_variable_get(:@header)['connection'] = 'upgrade'
+          res.send_header(req.socket)
+        end
+        if status == 101
+          req.socket.close
+          req.request_line = nil
+        else
+          res.status = status
+          res.body = body
+        end
+      end
       server
     end
 
