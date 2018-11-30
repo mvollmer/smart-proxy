@@ -224,9 +224,11 @@ module Proxy
         methods = %w(publickey)
         methods.unshift('password') if params["ssh_password"]
 
+        key_file = ForemanRemoteExecutionCore.settings.fetch(:ssh_identity_key_file)
+
         ssh_options = { }
         ssh_options[:port] = params["ssh_port"] if params["ssh_port"]
-        ssh_options[:keys] = [ params["ssh_key_file"] ] if params["ssh_key_file"]
+        ssh_options[:keys] = [ key_file ] if key_file
         ssh_options[:password] = params["ssh_password"] if params["ssh_password"]
         ssh_options[:passphrase] = params[:ssh_key_passphrase] if params[:ssh_key_passphrase]
         ssh_options[:keys_only] = true
