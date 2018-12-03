@@ -234,8 +234,6 @@ module Proxy
         ssh_options[:keys_only] = true
         ssh_options[:auth_methods] = methods
         ssh_options[:verify_host_key] = :accept_new_or_local_tunnel
-        # ssh_options[:user_known_hosts_file] = @known_hosts_file if @known_hosts_file
-        # ssh_options[:user_known_hosts_file] = prepare_known_hosts if @host_public_key
         ssh_options[:number_of_password_prompts] = 1
 
         status, body = ssh_on_socket(req.socket, params["command"], params["ssh_user"], params["hostname"],
