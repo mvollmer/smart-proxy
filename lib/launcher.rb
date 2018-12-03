@@ -204,13 +204,11 @@ module Proxy
           if started
             return 101, ""
           else
-            return 418, err_buf
+            return 400, err_buf
           end
         end
-      rescue Net::SSH::AuthenticationFailed => e
-        return 401, e.message
-      rescue Net::SSH::HostKeyMismatch => e
-        return 401, e.message
+      rescue => e
+        return 400, e.message
       end
     end
 
