@@ -173,7 +173,18 @@ module Proxy
       retry
     end
 
-    def add_puma_server(app, address, port, conn_type)
+    def add_puma_server_callback(sd_notify)
+      events = ::Puma::Events.new(::Proxy::LogBuffer::Decorator.instance, ::Proxy::LogBuffer::Decorator.instance)
+      events.register(:state) do |status|
+        if status == :running
+          logger.debug "Finished launching a puma instance, #{sd_notify.pending} instances to go..."
+          sd_notify.ready_all { logger.info("Smart proxy has finished launching #{sd_notify.total} puma instances, ready to serve requests.") }
+        end
+      end
+      events
+    end
+
+    def add_puma_server(app, address, port, conn_type, sd_notify)
       logger.debug "Launching Puma listener at #{address} port #{port}"
       if conn_type == :ssl
         require 'cgi'
@@ -188,13 +199,24 @@ module Proxy
       # the following lines are from lib/rack/handler/puma.rb#run
       options = {Verbose: true, Port: port, Host: host}
       conf = Rack::Handler::Puma.config(app[:app], options)
-      events = ::Puma::Events.new(::Proxy::LogBuffer::Decorator.instance, ::Proxy::LogBuffer::Decorator.instance)
+      # install callback to notify systemd
+      events = add_puma_server_callback(sd_notify)
       launcher = ::Puma::Launcher.new(conf, :events => events)
       @servers << launcher
       launcher.run
     end
 
-    def add_webrick_server(app, addresses, port)
+    def add_webrick_server_callback(app, sd_notify)
+      app[:StartCallback] = lambda do
+        logger.debug "Finished launching a webrick instance, #{sd_notify.pending} instances to go..."
+        sd_notify.ready_all { logger.info("Smart proxy has finished launching #{sd_notify.total} webrick instances, ready to serve requests.") }
+      end
+    end
+
+    def add_webrick_server(app, addresses, port, sd_notify)
+      # install callback to notify systemd
+      add_webrick_server_callback(app, sd_notify)
+      # initialize the server
       server = ::WEBrick::HTTPServer.new(app)
       addresses.each do |address|
         logger.debug "Launching Webrick listener at #{address} port #{port}"
@@ -204,17 +226,17 @@ module Proxy
       server
     end
 
-    def add_threaded_server(server_name, conn_type, app, addresses, port)
+    def add_threaded_server(server_name, conn_type, app, addresses, port, sd_notify)
       result = []
       case server_name
       when :webrick
         result << Thread.new do
-          @servers << add_webrick_server(app, addresses, port).start
+          @servers << add_webrick_server(app, addresses, port, sd_notify).start
         end
       when :puma
         addresses.map{|a| a == '*' ? ['0.0.0.0', '[::1]'] : a}.flatten.each do |address|
           result << Thread.new do
-            add_puma_server(app, address, port, conn_type)
+            add_puma_server(app, address, port, conn_type, sd_notify)
           end
         end
       end
@@ -234,7 +256,8 @@ module Proxy
 
       http_app = http_app(@settings.http_port)
       https_app = https_app(@settings.https_port)
-      install_http_server_callback!(http_app, https_app)
+      sd_notify = Proxy::SdNotify.new
+      sd_notify.ready_when([http_app, https_app].compact.size)
 
       http_server_name = @settings.http_server_type
       https_server_name = @settings.http_server_type
@@ -244,7 +267,8 @@ module Proxy
                                  :ssl,
                                  https_app,
                                  @settings.bind_host,
-                                 @settings.https_port)
+                                 @settings.https_port,
+                                 sd_notify)
       end
 
       if http_app
@@ -252,7 +276,8 @@ module Proxy
                                  :tcp,
                                  http_app,
                                  @settings.bind_host,
-                                 @settings.http_port)
+                                 @settings.http_port,
+                                 sd_notify)
       end
 
       Proxy::SignalHandler.install_traps(@servers)
@@ -267,29 +292,6 @@ module Proxy
       logger.error "Error during startup, terminating", e
       puts "Errors detected on startup, see log for details. Exiting: #{e}"
       exit(1)
-    end
-
-    def install_http_server_callback!(*apps)
-      apps.compact!
-
-      # track how many apps are still starting up
-      @pending_server = apps.size
-      @pending_server_lock = Mutex.new
-
-      apps.each do |app|
-        # add a callback to each server, decrementing the pending counter
-        app[:StartCallback] = lambda do
-          @pending_server_lock.synchronize do
-            @pending_server -= 1
-            launched(apps) if @pending_server.zero?
-          end
-        end
-      end
-    end
-
-    def launched(apps)
-      logger.info("Smart proxy has launched on #{apps.size} socket(s), waiting for requests")
-      Proxy::SdNotify.new.tap { |sd| sd.ready if sd.active? }
     end
   end
 end

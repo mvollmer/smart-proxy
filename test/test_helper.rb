@@ -45,9 +45,9 @@ module Proxy::IntegrationTestCase
       app = launcher.public_send("#{protocol}_app", port, plugins)
       case @settings.http_server_type
       when :webrick
-        launcher.add_webrick_server(app.merge(AccessLog: [Logger.new('/dev/null')]), ['localhost'], port).start
+        launcher.add_webrick_server(app.merge(AccessLog: [Logger.new('/dev/null')]), ['localhost'], port, Proxy::SdNotify.new).start
       when :puma
-        launcher.add_puma_server(app.merge(AccessLog: [Logger.new('/dev/null')]), ['localhost'], port).start
+        launcher.add_puma_server(app.merge(AccessLog: [Logger.new('/dev/null')]), ['localhost'], port, Proxy::SdNotify.new).start
       end
     end
     Timeout::timeout(2) do
