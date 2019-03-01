@@ -26,6 +26,32 @@ class SdNotifyTest < Test::Unit::TestCase
     assert_equal("READY=1\n", with_test_socket { Proxy::SdNotify.new.ready })
   end
 
+  def test_ready_all
+    assert_equal("READY=1\n", with_test_socket do
+      sdn = Proxy::SdNotify.new
+      sdn.ready_when(3)
+      sdn.ready_all(1)
+      sdn.ready_all(1)
+      sdn.ready_all(1)
+    end)
+  end
+
+  def test_ready_total
+    sdn = Proxy::SdNotify.new
+    sdn.ready_when(3)
+    assert_equal 3, sdn.total
+  end
+
+  def test_ready_pending
+    sdn = Proxy::SdNotify.new
+    sdn.ready_when(3)
+    assert_equal 3, sdn.pending
+    sdn.ready_all(1)
+    sdn.ready_all(1)
+    sdn.ready_all(1)
+    assert_equal 0, sdn.pending
+  end
+
   private
 
   def with_notify_socket(socket)
