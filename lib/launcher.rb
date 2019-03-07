@@ -122,7 +122,8 @@ module Proxy
         app_details[:SSLArgs] = {
           :ca => @settings.ssl_ca_file,
           :key => @settings.ssl_private_key,
-          :cert => @settings.ssl_certificate
+          :cert => @settings.ssl_certificate,
+          :verify_mode => 'peer'
         }
       end
       app_details
@@ -177,21 +178,22 @@ module Proxy
       events = ::Puma::Events.new(::Proxy::LogBuffer::Decorator.instance, ::Proxy::LogBuffer::Decorator.instance)
       events.register(:state) do |status|
         if status == :running
-          logger.debug "Finished launching a puma instance, #{sd_notify.pending} instances to go..."
           sd_notify.ready_all { logger.info("Smart proxy has finished launching #{sd_notify.total} puma instances, ready to serve requests.") }
+          logger.debug "Finished launching a puma instance, #{sd_notify.pending} instances to go..."
         end
       end
       events
     end
 
     def add_puma_server(app, address, port, conn_type, sd_notify)
+      address = "[#{address}]" if address.include?(':')
       logger.debug "Launching Puma listener at #{address} port #{port}"
       if conn_type == :ssl
         require 'cgi'
         query_list = app[:SSLArgs].to_a.map do |x|
           "#{CGI::escape(x[0].to_s)}=#{CGI::escape(x[1])}"
         end
-        host = "ssl://#{address}/?#{query_list.join('&')}"
+        host = "ssl://#{address}:#{port}/?#{query_list.join('&')}"
       else
         host = address
       end
@@ -208,8 +210,8 @@ module Proxy
 
     def add_webrick_server_callback(app, sd_notify)
       app[:StartCallback] = lambda do
+        sd_notify.ready_all { logger.info("Smart proxy has finished launching #{sd_notify.total} webrick instances.\nSending NOTIFY_SOCKET, ready to serve requests.") }
         logger.debug "Finished launching a webrick instance, #{sd_notify.pending} instances to go..."
-        sd_notify.ready_all { logger.info("Smart proxy has finished launching #{sd_notify.total} webrick instances, ready to serve requests.") }
       end
     end
 
@@ -234,7 +236,10 @@ module Proxy
           @servers << add_webrick_server(app, addresses, port, sd_notify).start
         end
       when :puma
-        addresses.map{|a| a == '*' ? ['0.0.0.0', '[::1]'] : a}.flatten.each do |address|
+        addresses.flatten.each do |address|
+          # Puma listens both on IPv4 and IPv6 on '::', there is no way to make Puma
+          # to listen only on IPv6.
+          address = '::' if address == '*'
           result << Thread.new do
             add_puma_server(app, address, port, conn_type, sd_notify)
           end
@@ -256,8 +261,10 @@ module Proxy
 
       http_app = http_app(@settings.http_port)
       https_app = https_app(@settings.https_port)
+      expected = [http_app, https_app].compact.size
+      logger.debug "Expected number of instances to launch: #{expected}"
       sd_notify = Proxy::SdNotify.new
-      sd_notify.ready_when([http_app, https_app].compact.size)
+      sd_notify.ready_when(expected)
 
       http_server_name = @settings.http_server_type
       https_server_name = @settings.http_server_type

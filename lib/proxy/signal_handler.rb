@@ -28,9 +28,9 @@ class Proxy::SignalHandler
   def install_int_trap(servers)
     trap(:INT) do
       servers.each do |server|
-        server.shutdown if server.respond_to?(:shutdown)
-        server.stop if server.respond_to?(:stop)
-      end
+        server.shutdown if server && server.respond_to?(:shutdown)
+        server.stop if server && server.respond_to?(:stop)
+      end unless servers.nil?
       exit(0)
     end
   end
@@ -38,9 +38,9 @@ class Proxy::SignalHandler
   def install_term_trap(servers)
     trap(:TERM) do
       servers.each do |server|
-        server.shutdown if server.respond_to?(:shutdown)
-        server.stop if server.respond_to?(:stop)
-      end
+        server.shutdown if server && server.respond_to?(:shutdown)
+        server.stop if server && server.respond_to?(:stop)
+      end unless servers.nil?
       exit(0)
     end
   end

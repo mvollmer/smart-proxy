@@ -14,11 +14,12 @@ module Proxy
     end
 
     def notify(message)
-
       create_socket.tap do |socket|
         socket.sendmsg(message.chomp + "\n") # ensure trailing \n
         socket.close
       end
+    rescue Exception => e
+      raise "NOTIFY_SOCKET was set but unable to open: #{e}"
     end
 
     def ready(state = 1)

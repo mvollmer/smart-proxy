@@ -49,7 +49,7 @@
 #:daemon_pid: /var/run/foreman-proxy/foreman-proxy.pid
 
 # host and ports configuration
-# an array of interfaces to bind ports to (possible values: *, localhost, 0.0.0.0)
+# an array of interfaces to bind ports to (possible values: *, localhost, 0.0.0.0, ::1, ::)
 #:bind_host: ['*']
 # http is disabled by default. To enable, uncomment 'http_port' setting
 #:http_port: 8000
