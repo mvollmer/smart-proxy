@@ -122,7 +122,8 @@ module Proxy
         app_details[:SSLArgs] = {
           :ca => @settings.ssl_ca_file,
           :key => @settings.ssl_private_key,
-          :cert => @settings.ssl_certificate
+          :cert => @settings.ssl_certificate,
+          :verify_mode => 'peer'
         }
       end
       app_details
